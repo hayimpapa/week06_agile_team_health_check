@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { supabase, supabaseWithPin } from '../supabaseClient';
+import { computeScores, pct, getMajority, getTrend } from '../utils/scoring';
+import { sanitizeText } from '../utils/sanitize';
 
 const COLOR_MAP = {
   GREEN: { bg: 'bg-green-500', text: 'text-green-700', label: 'Awesome' },
@@ -19,6 +21,25 @@ export default function Results() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [exportLabel, setExportLabel] = useState('Export Summary');
+  const [isLive, setIsLive] = useState(false);
+
+  // Fetch responses using PIN-authenticated client
+  const fetchResponses = useCallback(async () => {
+    if (!pin) return;
+    const client = supabaseWithPin(pin);
+    const { data, error: err } = await client
+      .from('responses')
+      .select('*')
+      .eq('session_id', sessionId);
+
+    if (err) {
+      setError('Invalid PIN or no responses yet.');
+      setUnlocked(false);
+    } else {
+      setResponses(data || []);
+    }
+    return { data, error: err };
+  }, [pin, sessionId]);
 
   // Load session (public read)
   useEffect(() => {
@@ -40,25 +61,37 @@ export default function Results() {
     setLoading(true);
     setError(null);
 
-    const client = supabaseWithPin(pin);
-    client
-      .from('responses')
-      .select('*')
-      .eq('session_id', sessionId)
-      .then(({ data, error: err }) => {
-        if (err || !data || data.length === 0) {
-          if (err) {
-            setError('Invalid PIN or no responses yet.');
-            setUnlocked(false);
-          } else {
-            setResponses([]);
-          }
-        } else {
-          setResponses(data);
+    fetchResponses().then(() => setLoading(false));
+  }, [unlocked, pin, sessionId, fetchResponses]);
+
+  // Real-time subscription: listen for new responses
+  useEffect(() => {
+    if (!unlocked || !pin) return;
+
+    const channel = supabase
+      .channel(`responses:${sessionId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'responses',
+          filter: `session_id=eq.${sessionId}`,
+        },
+        () => {
+          // Re-fetch all responses on new insert (uses PIN-authenticated client)
+          fetchResponses();
         }
-        setLoading(false);
+      )
+      .subscribe((status) => {
+        setIsLive(status === 'SUBSCRIBED');
       });
-  }, [unlocked, pin, sessionId]);
+
+    return () => {
+      supabase.removeChannel(channel);
+      setIsLive(false);
+    };
+  }, [unlocked, pin, sessionId, fetchResponses]);
 
   // Compute trends when session loads
   useEffect(() => {
@@ -70,9 +103,7 @@ export default function Results() {
       .order('created_at', { ascending: false })
       .then(({ data }) => {
         if (!data || data.length < 2) return;
-        // The previous session is the second one (current is first)
         const prevSessionId = data[1].id;
-        // We need the admin pin to read responses of the prev session too
         if (!pin) return;
         const client = supabaseWithPin(pin);
         client
@@ -120,27 +151,19 @@ export default function Results() {
   const scores = computeScores(responses);
   const prevScores = trends;
 
-  function getTrend(cardId) {
-    if (!prevScores || !prevScores[cardId] || !scores[cardId]) return null;
-    const curr = scores[cardId].GREEN / Math.max(totals, 1);
-    const prev = prevScores[cardId].GREEN / Math.max(prevScores[cardId].total, 1);
-    if (curr > prev + 0.05) return '↑';
-    if (curr < prev - 0.05) return '↓';
-    return '→';
+  function getCardTrend(cardId) {
+    return getTrend(scores, prevScores, cardId, totals);
   }
 
-  function getMajority(cardId) {
-    const s = scores[cardId];
-    if (!s) return 'GREEN';
-    if (s.GREEN >= s.AMBER && s.GREEN >= s.RED) return 'GREEN';
-    if (s.AMBER >= s.GREEN && s.AMBER >= s.RED) return 'AMBER';
-    return 'RED';
+  function getCardMajority(cardId) {
+    return getMajority(scores, cardId);
   }
 
   function collectComments(cardId) {
     return responses
       .map((r) => r.comments?.[cardId])
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((c) => sanitizeText(c));
   }
 
   function exportSummary() {
@@ -149,7 +172,7 @@ export default function Results() {
     text += `Respondents: ${totals}\n\n`;
     for (const card of cards) {
       const s = scores[card.id] || { GREEN: 0, AMBER: 0, RED: 0 };
-      const trend = getTrend(card.id);
+      const trend = getCardTrend(card.id);
       text += `${card.title}${trend ? ' ' + trend : ''}\n`;
       text += `  Awesome: ${s.GREEN} (${pct(s.GREEN, totals)}) | OK: ${s.AMBER} (${pct(s.AMBER, totals)}) | Struggling: ${s.RED} (${pct(s.RED, totals)})\n`;
       const cmts = collectComments(card.id);
@@ -172,7 +195,18 @@ export default function Results() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold">{session.name}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-2xl font-bold">{session.name}</h2>
+            {isLive && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                </span>
+                Live
+              </span>
+            )}
+          </div>
           <p className="text-sm text-gray-500">
             {totals} respondent{totals !== 1 ? 's' : ''} · Created{' '}
             {new Date(session.created_at).toLocaleDateString()}
@@ -196,10 +230,10 @@ export default function Results() {
           {/* Heatmap */}
           <section className="space-y-3">
             <h3 className="text-lg font-semibold">Heatmap</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2" role="list" aria-label="Health check heatmap">
               {cards.map((card) => {
-                const majority = getMajority(card.id);
-                const trend = getTrend(card.id);
+                const majority = getCardMajority(card.id);
+                const trend = getCardTrend(card.id);
                 const bgClass =
                   majority === 'GREEN'
                     ? 'bg-green-500'
@@ -207,13 +241,16 @@ export default function Results() {
                       ? 'bg-yellow-400'
                       : 'bg-red-500';
                 const textClass = majority === 'AMBER' ? 'text-yellow-900' : 'text-white';
+                const statusLabel = COLOR_MAP[majority].label;
                 return (
                   <div
                     key={card.id}
+                    role="listitem"
+                    aria-label={`${card.title}: ${statusLabel}${trend ? `, trend ${trend === '↑' ? 'improving' : trend === '↓' ? 'declining' : 'stable'}` : ''}`}
                     className={`${bgClass} ${textClass} rounded-lg p-3 text-center`}
                   >
                     <p className="text-sm font-semibold leading-tight">{card.title}</p>
-                    {trend && <p className="text-lg mt-1">{trend}</p>}
+                    {trend && <p className="text-lg mt-1" aria-hidden="true">{trend}</p>}
                   </div>
                 );
               })}
@@ -225,7 +262,7 @@ export default function Results() {
             <h3 className="text-lg font-semibold">Detailed Breakdown</h3>
             {cards.map((card) => {
               const s = scores[card.id] || { GREEN: 0, AMBER: 0, RED: 0 };
-              const trend = getTrend(card.id);
+              const trend = getCardTrend(card.id);
               const cmts = collectComments(card.id);
               return (
                 <div
@@ -236,6 +273,7 @@ export default function Results() {
                     <h4 className="font-semibold">{card.title}</h4>
                     {trend && (
                       <span
+                        aria-label={`Trend: ${trend === '↑' ? 'improving' : trend === '↓' ? 'declining' : 'stable'}`}
                         className={`text-sm font-bold ${
                           trend === '↑'
                             ? 'text-green-600'
@@ -250,7 +288,7 @@ export default function Results() {
                   </div>
 
                   {/* RAG bar */}
-                  <div className="flex h-7 rounded-lg overflow-hidden">
+                  <div className="flex h-7 rounded-lg overflow-hidden" role="img" aria-label={`Votes: ${s.GREEN} Awesome, ${s.AMBER} OK, ${s.RED} Struggling`}>
                     {['GREEN', 'AMBER', 'RED'].map((color) => {
                       const count = s[color];
                       const width = totals > 0 ? (count / totals) * 100 : 0;
@@ -273,6 +311,7 @@ export default function Results() {
                       <span key={color} className="flex items-center gap-1">
                         <span
                           className={`inline-block w-2.5 h-2.5 rounded-full ${COLOR_MAP[color].bg}`}
+                          aria-hidden="true"
                         />
                         {COLOR_MAP[color].label}: {s[color]}
                       </span>
@@ -308,18 +347,21 @@ function PinGate({ pin, setPin, onUnlock, error }) {
   return (
     <div className="max-w-sm mx-auto px-4 py-24 space-y-6 text-center">
       <h2 className="text-2xl font-bold">Admin Access</h2>
-      <p className="text-gray-500">Enter the 4-digit PIN to view results.</p>
+      <p className="text-gray-500" id="pin-description">Enter the 4-digit PIN to view results.</p>
       <form onSubmit={handleSubmit} className="space-y-4">
+        <label htmlFor="admin-pin" className="sr-only">Admin PIN</label>
         <input
+          id="admin-pin"
           type="password"
           inputMode="numeric"
           maxLength={4}
           value={pin}
           onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
           placeholder="PIN"
+          aria-describedby="pin-description"
           className="w-32 mx-auto block text-center border border-gray-300 rounded-lg px-4 py-3 text-lg tracking-widest focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
         />
-        {error && <p className="text-red-600 text-sm">{error}</p>}
+        {error && <p className="text-red-600 text-sm" role="alert">{error}</p>}
         <button
           type="submit"
           disabled={pin.length !== 4}
@@ -332,19 +374,3 @@ function PinGate({ pin, setPin, onUnlock, error }) {
   );
 }
 
-function computeScores(responses) {
-  const scores = {};
-  for (const r of responses) {
-    for (const [cardId, vote] of Object.entries(r.votes || {})) {
-      if (!scores[cardId]) scores[cardId] = { GREEN: 0, AMBER: 0, RED: 0, total: 0 };
-      if (scores[cardId][vote] !== undefined) scores[cardId][vote]++;
-      scores[cardId].total++;
-    }
-  }
-  return scores;
-}
-
-function pct(count, total) {
-  if (total === 0) return '0%';
-  return `${Math.round((count / total) * 100)}%`;
-}
