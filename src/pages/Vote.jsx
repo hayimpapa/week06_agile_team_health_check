@@ -1,30 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import { getToken, hasSubmitted, markSubmitted } from '../utils/respondent';
+import { sanitizeText } from '../utils/sanitize';
 
 const VOTE_OPTIONS = [
   { value: 'GREEN', emoji: '🟢', label: 'Awesome' },
   { value: 'AMBER', emoji: '🟡', label: 'OK' },
   { value: 'RED', emoji: '🔴', label: 'Struggling' },
 ];
-
-function getToken(sessionId) {
-  const key = `shc_token_${sessionId}`;
-  let token = localStorage.getItem(key);
-  if (!token) {
-    token = crypto.randomUUID();
-    localStorage.setItem(key, token);
-  }
-  return token;
-}
-
-function hasSubmitted(sessionId) {
-  return localStorage.getItem(`shc_submitted_${sessionId}`) === 'true';
-}
-
-function markSubmitted(sessionId) {
-  localStorage.setItem(`shc_submitted_${sessionId}`, 'true');
-}
 
 export default function Vote() {
   const { sessionId } = useParams();
@@ -86,7 +70,8 @@ export default function Vote() {
 
     const filteredComments = {};
     for (const [k, v] of Object.entries(comments)) {
-      if (v && v.trim()) filteredComments[k] = v.trim();
+      const cleaned = sanitizeText(v);
+      if (cleaned.trim()) filteredComments[k] = cleaned.trim();
     }
 
     const { error: dbError } = await supabase.from('responses').insert({
@@ -123,7 +108,14 @@ export default function Vote() {
       </div>
 
       {/* Progress bar */}
-      <div className="w-full bg-gray-200 rounded-full h-1.5">
+      <div
+        className="w-full bg-gray-200 rounded-full h-1.5"
+        role="progressbar"
+        aria-valuenow={currentIndex + 1}
+        aria-valuemin={1}
+        aria-valuemax={cards.length}
+        aria-label={`Card ${currentIndex + 1} of ${cards.length}`}
+      >
         <div
           className="bg-indigo-600 h-1.5 rounded-full transition-all"
           style={{ width: `${((currentIndex + 1) / cards.length) * 100}%` }}
@@ -146,21 +138,27 @@ export default function Vote() {
         </div>
 
         {/* Vote buttons */}
-        <div className="flex gap-3">
-          {VOTE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              onClick={() => selectVote(opt.value)}
-              className={`flex-1 flex flex-col items-center gap-1 py-3 rounded-lg border-2 transition font-medium text-sm ${
-                votes[card.id] === opt.value
-                  ? 'border-indigo-600 bg-indigo-50'
-                  : 'border-gray-200 hover:border-gray-300 bg-white'
-              }`}
-            >
-              <span className="text-xl">{opt.emoji}</span>
-              {opt.label}
-            </button>
-          ))}
+        <div className="flex gap-3" role="radiogroup" aria-label={`Vote for ${card.title}`}>
+          {VOTE_OPTIONS.map((opt) => {
+            const isSelected = votes[card.id] === opt.value;
+            return (
+              <button
+                key={opt.value}
+                onClick={() => selectVote(opt.value)}
+                role="radio"
+                aria-checked={isSelected}
+                aria-label={`${opt.label} — ${opt.value === 'GREEN' ? card.awesome : opt.value === 'RED' ? card.crappy : 'Somewhere in between'}`}
+                className={`flex-1 flex flex-col items-center gap-1 py-3 rounded-lg border-2 transition font-medium text-sm ${
+                  isSelected
+                    ? 'border-indigo-600 bg-indigo-50'
+                    : 'border-gray-200 hover:border-gray-300 bg-white'
+                }`}
+              >
+                <span className="text-xl" aria-hidden="true">{opt.emoji}</span>
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
 
         {/* Comment */}
