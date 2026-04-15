@@ -1,9 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getMySessions, removeMySession } from '../utils/mySessions';
 
 export default function Landing() {
   const navigate = useNavigate();
   const [joinId, setJoinId] = useState('');
+  const [mySessions, setMySessions] = useState([]);
+
+  useEffect(() => {
+    setMySessions(getMySessions());
+  }, []);
 
   function handleJoin(e) {
     e.preventDefault();
@@ -13,6 +19,15 @@ export default function Landing() {
       const match = id.match(/session\/([a-f0-9-]+)/i);
       navigate(`/session/${match ? match[1] : id}`);
     }
+  }
+
+  function handleOpenResults(session) {
+    navigate(`/session/${session.id}/results?pin=${session.pin}`);
+  }
+
+  function handleForget(id) {
+    removeMySession(id);
+    setMySessions(getMySessions());
   }
 
   return (
@@ -61,6 +76,41 @@ export default function Landing() {
           </button>
         </form>
       </div>
+
+      {mySessions.length > 0 && (
+        <section className="space-y-3" aria-labelledby="my-sessions-heading">
+          <div className="flex items-center justify-between">
+            <h3 id="my-sessions-heading" className="text-sm font-medium text-gray-700">
+              My Sessions
+            </h3>
+            <span className="text-xs text-gray-400">Stored on this browser</span>
+          </div>
+          <ul className="divide-y divide-gray-100 bg-white border border-gray-200 rounded-lg">
+            {mySessions.map((s) => (
+              <li key={s.id} className="flex items-center gap-3 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => handleOpenResults(s)}
+                  className="flex-1 text-left min-w-0"
+                >
+                  <p className="font-medium text-gray-900 truncate">{s.name || 'Untitled session'}</p>
+                  <p className="text-xs text-gray-500">
+                    Created {new Date(s.createdAt).toLocaleDateString()}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleForget(s.id)}
+                  aria-label={`Forget session ${s.name || s.id}`}
+                  className="text-xs text-gray-400 hover:text-red-600"
+                >
+                  Forget
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
