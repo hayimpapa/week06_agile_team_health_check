@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { defaultCards } from '../defaultCards';
+import { saveMySession } from '../utils/mySessions';
 
 export default function CreateSession() {
   const navigate = useNavigate();
@@ -47,6 +48,7 @@ export default function CreateSession() {
       setSaving(false);
       return;
     }
+    saveMySession({ id: data.id, name: name.trim(), pin });
     navigate(`/session/${data.id}/created?pin=${pin}`);
   }
 

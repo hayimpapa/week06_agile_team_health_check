@@ -74,3 +74,30 @@ create policy "Admin can read responses with correct PIN"
 -- INDEXES
 -- ============================================================
 create index idx_responses_session_id on responses(session_id);
+
+-- ============================================================
+-- RETENTION / FREE-TIER PROTECTION
+-- ============================================================
+-- Sessions accumulate forever by default, which will eventually fill the
+-- Supabase free tier (500 MB storage, 5 GB egress). The block below deletes
+-- sessions older than 90 days; responses are removed automatically via the
+-- ON DELETE CASCADE on the foreign key.
+--
+-- Option 1 — run manually in the SQL Editor whenever you remember to:
+--
+--   delete from sessions where created_at < now() - interval '90 days';
+--
+-- Option 2 — schedule it with pg_cron so it runs automatically. Enable the
+-- extension first in Dashboard > Database > Extensions, then uncomment:
+--
+--   create extension if not exists pg_cron;
+--   select cron.schedule(
+--     'squadhc-cleanup-old-sessions',
+--     '0 3 * * *',  -- daily at 03:00 UTC
+--     $$delete from sessions where created_at < now() - interval '90 days'$$
+--   );
+--
+-- To remove the schedule later:
+--   select cron.unschedule('squadhc-cleanup-old-sessions');
+--
+-- Adjust the interval to match your retention needs (e.g. '30 days', '1 year').
