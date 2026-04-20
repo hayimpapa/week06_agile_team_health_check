@@ -38,9 +38,10 @@ export default function AboutThisBuild() {
             Squad Health Check is a Spotify-style team health check, built for speed
             and zero friction. Team members vote anonymously on a shared link
             (Awesome / OK / Struggling) and the session creator views an aggregated
-            RAG breakdown, heatmap, and comments behind a 4-digit PIN. Built with
-            React 19, Vite, Tailwind CSS v4, and Supabase (Postgres + Row Level
-            Security).
+            RAG breakdown, heatmap, trend arrows, and comments behind a 4-digit PIN
+            &mdash; with results updating live as votes come in. Built with React 19,
+            Vite, Tailwind CSS v4, and Supabase (Postgres + Row Level Security +
+            Realtime).
           </p>
         </section>
 

@@ -5,10 +5,11 @@ A web app for running Spotify-style Squad Health Checks with your team. Built wi
 ## Features
 
 - **No login required** — team members vote via a shared link
-- **Admin PIN** — only the session creator can view results
-- **Customisable card deck** — edit, add, or remove cards before launching
-- **Real-time results** — RAG breakdown, heatmap, trend arrows, and anonymised comments
+- **Admin PIN** — 4-digit PIN gates the results page (enforced by Supabase RLS via an `x-admin-pin` header)
+- **Customisable card deck** — edit, add, or remove cards before launching (10 Spotify-style defaults)
+- **Live results** — Supabase Realtime subscription updates the page as new votes land; RAG bars, heatmap, trend arrows (vs. the previous session with the same name), and anonymised comments
 - **Export** — copy a plain-text summary to clipboard
+- **My Sessions** — the Landing page lists sessions you've created on this browser (stored in `localStorage`) for quick access to their results
 - **Mobile friendly** — optimised for voting on phones
 
 ## Setup
@@ -17,11 +18,11 @@ A web app for running Spotify-style Squad Health Checks with your team. Built wi
 
 1. Go to [supabase.com](https://supabase.com) and create a new project
 2. Open the **SQL Editor** in the Supabase dashboard
-3. Copy the contents of `schema.sql` and run it — this creates the `sessions` and `responses` tables with Row Level Security policies
+3. Copy the contents of `schema.sql` and run it — this creates the `sessions` and `responses` tables with Row Level Security policies. The file also contains optional `pg_cron` snippets to auto-delete sessions older than 90 days to stay within the Supabase free tier.
 
 ### 2. Configure Environment Variables
 
-Copy the `.env` file and fill in your Supabase credentials:
+Create a `.env` file in the project root with your Supabase credentials:
 
 ```
 VITE_SUPABASE_URL=https://your-project.supabase.co
@@ -67,5 +68,7 @@ The build command is `npm run build` and the output directory is `dist`.
 ## Tech Stack
 
 - **Frontend**: React 19, Vite, Tailwind CSS v4
-- **Backend**: Supabase (PostgreSQL + Row Level Security)
+- **Backend**: Supabase (PostgreSQL + Row Level Security, Realtime for live results)
 - **Routing**: React Router v7 with hash-based routing (`#/session/:id`)
+- **Sanitization**: DOMPurify strips unsafe HTML from comments before they're stored
+- **Tests**: Vitest + React Testing Library (`npm test`)
